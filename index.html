@@ -185,25 +185,6 @@
         // Load the GLTF model
         const gltfLoader = new GLTFLoader();
         
-        // Handle loading process
-        const loadingManager = new THREE.LoadingManager();
-        loadingManager.onProgress = function(url, itemsLoaded, itemsTotal) {
-            console.log('Loading file: ' + url + '.\nLoaded ' + itemsLoaded + ' of ' + itemsTotal + ' files.');
-        };
-
-        loadingManager.onLoad = function() {
-            console.log('Model loaded successfully');
-            document.getElementById('loading').style.display = 'none';
-        };
-
-        loadingManager.onError = function(url) {
-            console.error('Error loading ' + url);
-            document.getElementById('error').textContent = 'Error loading 3D model';
-            document.getElementById('error').style.display = 'block';
-            document.getElementById('loading').style.display = 'none';
-        };
-
-        gltfLoader.setManager(loadingManager);
         
         gltfLoader.load(
             './models/dodge_challenger_rt/scene.gltf',
