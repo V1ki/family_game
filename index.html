@@ -5,7 +5,8 @@
 	{
       "imports": {
 		"threex": "./js/ar-threex.mjs",
-        "three": "./js/three.module.min.js"
+        "three": "./js/three.module.min.js",
+        "three/addons/": "https://unpkg.com/three@0.150.1/examples/jsm/"
       }
     }
 </script>
@@ -19,6 +20,7 @@
     
     <script type="module">
         import * as THREE from 'three'
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
         import { ArToolkitSource, ArToolkitContext, ArMarkerControls } from 'threex'
 
         ArToolkitContext.baseURL = './'
@@ -181,7 +183,7 @@
         scene.add(modelGroup);
         
         // Load the GLTF model
-        const gltfLoader = new THREE.GLTFLoader();
+        const gltfLoader = new GLTFLoader();
         
         // Handle loading process
         const loadingManager = new THREE.LoadingManager();
@@ -206,7 +208,7 @@
         gltfLoader.load(
             './models/dodge_challenger_rt/scene.gltf',
             function(gltf) {
-                console.log('Model loaded successfully');
+                console.log('Model loaded successfully', gltf);
                 const model = gltf.scene;
                 
                 // Scale and position the model appropriately
