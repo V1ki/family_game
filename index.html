@@ -179,8 +179,8 @@
         //////////////////////////////////////////////////////////////////////////////////
 
         // Create a group to hold the model
-        const modelGroup = new THREE.Group();
-        scene.add(modelGroup);
+        // const modelGroup = new THREE.Group();
+        // scene.add(modelGroup);
         
         // Load the GLTF model
         const gltfLoader = new GLTFLoader();
@@ -198,7 +198,8 @@
                 model.rotation.x = -Math.PI/2; // Adjust rotation if needed
                 
                 // Add the model to our model group
-                modelGroup.add(model);
+                scene.add(model);
+                document.getElementById('loading').style.display = 'none';
             },
             function(xhr) {
                 console.log((xhr.loaded / xhr.total * 100) + '% loaded');
@@ -211,10 +212,12 @@
             }
         );
         
+
+        
         // Add animation for the model
         onRenderFcts.push(function(delta) {
-            if (modelGroup) {
-                modelGroup.rotation.y += delta * 0.5; // Rotate the model slowly
+            if (model) {
+                model.rotation.y += delta * 0.5; // Rotate the model slowly
             }
         });
 
