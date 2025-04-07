@@ -29,7 +29,7 @@ window.addEventListener('load', function() {
     document.body.appendChild(renderer.domElement);
 
     // 创建 AR 上下文
-    const arToolkitSource = new THREEx.ARToolkitSource({
+    const arToolkitSource = new THREEx.ArToolkitSource({
         sourceType: 'webcam',
         sourceWidth: window.innerWidth,
         sourceHeight: window.innerHeight,
@@ -64,7 +64,7 @@ window.addEventListener('load', function() {
     }
 
     // 创建 AR 上下文
-    const arToolkitContext = new THREEx.ARToolkitContext({
+    const arToolkitContext = new THREEx.ArToolkitContext({
         cameraParametersUrl: 'https://raw.githack.com/AR-js-org/AR.js/master/data/data/camera_para.dat',
         detectionMode: 'mono',
         maxDetectionRate: 30,
@@ -82,7 +82,7 @@ window.addEventListener('load', function() {
     const markerRoot = new THREE.Group();
     scene.add(markerRoot);
     
-    const markerControls = new THREEx.ARMarkerControls(arToolkitContext, markerRoot, {
+    const markerControls = new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
         type: 'pattern',
         patternUrl: 'pattern-marker.patt',
         changeMatrixMode: 'modelViewMatrix'
