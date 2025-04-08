@@ -18,7 +18,93 @@
     <div id="error" style="display: none; position: absolute; top: 10px; left: 10px; background-color: rgba(255,0,0,0.6); color: white; padding: 10px; z-index: 999;">
     </div>
     
-    <script type="module">
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+
+// 创建场景、相机和渲染器
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// 添加光源
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+directionalLight.position.set(10, 10, 10);
+scene.add(directionalLight);
+
+// 设置相机位置
+camera.position.z = 5;
+
+// 创建 GLTFLoader 实例
+const loader = new GLTFLoader();
+
+let mixer; // 动画混合器
+
+// 加载 GLTF 模型
+loader.load(
+    // 模型文件路径
+    './models/dodge_challenger_rt/scene.gltf',
+    // 成功回调
+    (gltf) => {
+        const model = gltf.scene; // 获取加载的模型
+        scene.add(model); // 将模型添加到场景中
+
+        console.log('模型加载成功:', model);
+
+        // 如果模型包含动画，初始化动画混合器
+        if (gltf.animations && gltf.animations.length > 0) {
+            mixer = new THREE.AnimationMixer(model); // 创建动画混合器
+
+            // 遍历所有动画并播放第一个动画
+            gltf.animations.forEach((clip, index) => {
+                const action = mixer.clipAction(clip); // 创建动画动作
+                if (index === 0) {
+                    action.play(); // 播放第一个动画
+                }
+            });
+        }
+    },
+    // 进度回调（可选）
+    (xhr) => {
+        console.log((xhr.loaded / xhr.total * 100) + '% 已加载');
+    },
+    // 错误回调
+    (error) => {
+        console.error('模型加载失败:', error);
+    }
+);
+
+// 渲染循环
+let clock = new THREE.Clock(); // 用于计算时间差
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    // 更新动画混合器
+    if (mixer) {
+        const delta = clock.getDelta(); // 获取时间差
+        mixer.update(delta); // 更新动画
+    }
+
+    renderer.render(scene, camera);
+}
+animate();
+
+// 监听窗口大小变化
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
+    <!-- <script type="module">
         import * as THREE from 'three'
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
         import { ArToolkitSource, ArToolkitContext, ArMarkerControls } from 'threex'
@@ -244,5 +330,5 @@
                 onRenderFct(deltaMsec / 1000, nowMsec / 1000)
             })
         })
-    </script>
+    </script> -->
 </body>
