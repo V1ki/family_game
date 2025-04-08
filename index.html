@@ -25,6 +25,11 @@
         <button id="3d-mode" style="padding: 8px 15px; cursor: pointer;">3D 模式</button>
     </div>
 
+    <div id="debug-info" 
+        style="position: absolute; top: 50px; left: 10px; background-color: rgba(0,0,255,0.6); color: white; padding: 10px; z-index: 999; display: none;">
+        调试信息将显示在这里
+    </div>
+
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -34,13 +39,28 @@
         // 设置AR基础URL
         ArToolkitContext.baseURL = './';
 
+        // 调试模式 - 设置为true可以显示更多调试信息
+        const DEBUG = true;
+        
         // 全局变量
         let scene, camera, renderer, model;
         let controls;
         let arToolkitSource, arToolkitContext, arMarkerControls;
+        let markerRoot;
         let mixer;
         let clock = new THREE.Clock();
         let isARMode = true; // 默认为AR模式
+        let modelLoaded = false;
+        let modelAttached = false;
+        
+        function showDebug(message) {
+            if (!DEBUG) return;
+            
+            const debugElement = document.getElementById('debug-info');
+            debugElement.style.display = 'block';
+            debugElement.textContent = message;
+            console.log(message);
+        }
 
         // 初始化场景
         initScene();
@@ -55,24 +75,42 @@
         // 创建场景、相机和渲染器
         function initScene() {
             scene = new THREE.Scene();
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            
+            // 创建渲染器
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                alpha: true,
+                preserveDrawingBuffer: true 
+            });
             renderer.setClearColor(new THREE.Color('lightgrey'), 0);
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.outputEncoding = THREE.sRGBEncoding;
             renderer.domElement.style.position = 'absolute';
             renderer.domElement.style.top = '0px';
             renderer.domElement.style.left = '0px';
             document.body.appendChild(renderer.domElement);
 
+            // 创建标记根节点（在场景初始化时就创建）
+            markerRoot = new THREE.Group();
+            markerRoot.name = 'marker-root';
+            scene.add(markerRoot);
+            
             // 加载模型
             loadModel();
 
             // 处理窗口大小变化
             window.addEventListener('resize', onWindowResize);
+            
+            // 添加灯光（在两种模式下都需要）
+            addLights();
+            
+            showDebug('场景初始化完成');
         }
 
         function enable3DMode() {
             isARMode = false;
+            showDebug('切换到3D模式');
             
             // 移除可能存在的AR相机
             if (scene.getObjectByName('ar-camera')) {
@@ -94,9 +132,6 @@
             // 添加辅助对象
             addHelpers();
             
-            // 添加灯光
-            addLights();
-
             // 更新按钮状态
             document.getElementById('3d-mode').style.backgroundColor = '#4CAF50';
             document.getElementById('ar-mode').style.backgroundColor = '';
@@ -104,19 +139,29 @@
             // 更新加载提示
             document.getElementById('loading').style.display = 'none';
 
-            // 开始渲染循环
-            animate3D();
-            
-            // 显示模型
-            if (model) {
+            // 如果模型已加载，将其从标记中移出并添加到场景中
+            if (model && modelLoaded) {
+                // 如果模型附加在标记上，移除它
+                if (modelAttached) {
+                    markerRoot.remove(model);
+                    modelAttached = false;
+                }
+                
+                // 添加到场景并调整位置
+                scene.add(model);
                 model.visible = true;
-                // 重新定位模型到场景中心
                 centerModel();
+                showDebug('3D模式：模型已居中显示');
             }
+
+            // 开始渲染循环
+            cancelAnimationFrame(window.arAnimationFrame);
+            animate3D();
         }
         
         function enableARMode() {
             isARMode = true;
+            showDebug('切换到AR模式');
             
             // 清除3D模式元素
             if (controls) {
@@ -143,7 +188,22 @@
             document.getElementById('loading').textContent = '请扫描AR标记显示3D模型...';
             document.getElementById('loading').style.display = 'block';
             
+            // 如果模型已加载，将其从场景中移出并添加到标记中
+            if (model && modelLoaded) {
+                // 如果模型已经在场景中，移除它
+                if (!modelAttached) {
+                    scene.remove(model);
+                }
+                
+                // 添加到标记上
+                markerRoot.add(model);
+                adjustModelForAR();
+                modelAttached = true;
+                showDebug('AR模式：模型已附加到标记');
+            }
+            
             // 开始AR渲染循环
+            cancelAnimationFrame(window.tdAnimationFrame);
             animateAR();
         }
         
@@ -151,28 +211,34 @@
             // 创建AR源
             arToolkitSource = new ArToolkitSource({
                 sourceType: 'webcam',
-                sourceWidth: window.innerWidth,
-                sourceHeight: window.innerHeight,
+                sourceWidth: window.innerWidth > window.innerHeight ? 640 : 480,
+                sourceHeight: window.innerWidth > window.innerHeight ? 480 : 640,
                 displayWidth: window.innerWidth,
                 displayHeight: window.innerHeight,
             });
 
             arToolkitSource.init(function onReady() {
-                console.log('AR 摄像头初始化成功');
+                showDebug('AR 摄像头初始化成功');
+                
                 arToolkitSource.domElement.addEventListener('canplay', () => {
-                    console.log(
-                        'AR camera ready:',
-                        arToolkitSource.domElement.videoWidth,
+                    showDebug(
+                        'AR camera ready: ' +
+                        arToolkitSource.domElement.videoWidth + 'x' +
                         arToolkitSource.domElement.videoHeight
                     );
+                    
+                    // 确保正确调整大小
+                    onWindowResize();
+                    
+                    // 初始化AR上下文
                     initARContext();
                 });
                 
-                setTimeout(() => {
-                    onWindowResize();
-                }, 2000);
+                // 确保在一定时间后调整大小
+                setTimeout(onWindowResize, 2000);
+                
             }, function onError() {
-                console.error('AR 摄像头初始化失败');
+                showDebug('AR 摄像头初始化失败');
                 document.getElementById('error').textContent = '摄像头访问失败，请确保已授予权限';
                 document.getElementById('error').style.display = 'block';
             });
@@ -184,8 +250,9 @@
                 cameraParametersUrl: ArToolkitContext.baseURL + './models/camera_para.dat',
                 detectionMode: 'mono',
                 maxDetectionRate: 60,
-                canvasWidth: arToolkitSource.domElement.videoWidth,
-                canvasHeight: arToolkitSource.domElement.videoHeight,
+                patternRatio: 0.75, // 如果标记检测不好可以调整这个值
+                imageSmoothingEnabled: true,
+                debug: DEBUG
             });
             
             // 初始化AR上下文
@@ -193,33 +260,25 @@
                 // 复制投影矩阵到相机
                 camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
                 
-                arToolkitContext.arController.orientation = getSourceOrientation();
-                arToolkitContext.arController.options.orientation = getSourceOrientation();
+                showDebug('AR 上下文初始化成功');
                 
-                console.log('AR 上下文初始化成功');
+                // 创建AR标记控制器
+                arMarkerControls = new ArMarkerControls(arToolkitContext, markerRoot, {
+                    type: 'pattern',
+                    patternUrl: ArToolkitContext.baseURL + 'pattern-marker.patt',
+                    changeMatrixMode: 'modelViewMatrix'
+                });
+                
+                showDebug('AR 标记控制器创建成功');
+                
+                // 如果模型已加载但尚未附加到标记
+                if (model && modelLoaded && !modelAttached) {
+                    markerRoot.add(model);
+                    adjustModelForAR();
+                    modelAttached = true;
+                    showDebug('模型已附加到AR标记');
+                }
             });
-            
-            // 创建AR标记控制器
-            let markerRoot = new THREE.Group();
-            markerRoot.name = 'marker-root';
-            scene.add(markerRoot);
-            
-            arMarkerControls = new ArMarkerControls(arToolkitContext, markerRoot, {
-                type: 'pattern',
-                patternUrl: ArToolkitContext.baseURL + 'pattern-marker.patt',
-                changeMatrixMode: 'modelViewMatrix'
-            });
-            
-            // 如果模型已加载，将其添加到标记上
-            if (model) {
-                // 从原始场景中移除模型
-                scene.remove(model);
-                // 添加到标记根节点
-                markerRoot.add(model);
-                // 调整模型
-                adjustModelForAR();
-                console.log('模型已附加到AR标记');
-            }
         }
         
         function getSourceOrientation() {
@@ -238,12 +297,12 @@
             if (!model) return;
             
             // 调整模型比例和位置以适合AR显示
-            model.scale.set(0.03, 0.03, 0.03); // 调整比例
-            model.position.set(0, 0, 0);
+            model.scale.set(0.01, 0.01, 0.01); // 调小比例让它更清晰
+            model.position.set(0, 0.25, 0); // 稍微抬高一点，避免埋在标记里
             model.rotation.x = -Math.PI/2; // 调整方向
             model.visible = true;
             
-            console.log('模型已调整为AR模式');
+            showDebug('模型已调整为AR模式');
         }
         
         function centerModel() {
@@ -263,6 +322,9 @@
             const maxDimension = Math.max(size.x, size.y, size.z);
             const scale = 1 / maxDimension; // 缩放到单位大小
             model.scale.set(scale, scale, scale);
+            
+            showDebug('模型已居中，尺寸: ' + size.x.toFixed(2) + 'x' + 
+                      size.y.toFixed(2) + 'x' + size.z.toFixed(2));
         }
         
         function addHelpers() {
@@ -305,10 +367,15 @@
         function loadModel() {
             const loader = new GLTFLoader();
             
+            showDebug('开始加载模型...');
+            
             loader.load(
                 './models/dodge_challenger_rt/scene.gltf',
                 (gltf) => {
                     model = gltf.scene;
+                    modelLoaded = true;
+                    
+                    showDebug('模型加载成功');
                     
                     // 遍历模型的所有子对象并设置材质属性
                     model.traverse((child) => {
@@ -324,20 +391,18 @@
                     });
                     
                     if (isARMode) {
-                        // 如果已经初始化了AR标记，将模型添加到标记上
-                        let markerRoot = scene.getObjectByName('marker-root');
+                        // 添加到标记上
                         if (markerRoot) {
                             markerRoot.add(model);
                             adjustModelForAR();
-                        } else {
-                            // 先添加到场景，稍后会移到标记上
-                            scene.add(model);
-                            model.visible = false;
+                            modelAttached = true;
+                            showDebug('模型已附加到AR标记');
                         }
                     } else {
                         // 3D模式直接添加到场景
                         scene.add(model);
                         centerModel();
+                        document.getElementById('loading').style.display = 'none';
                     }
                     
                     // 如果模型包含动画
@@ -349,19 +414,13 @@
                             }
                         });
                     }
-                    
-                    // 如果不是AR模式，隐藏加载提示
-                    if (!isARMode) {
-                        document.getElementById('loading').style.display = 'none';
-                    }
-                    
-                    console.log('模型加载完成');
                 },
                 (xhr) => {
-                    console.log((xhr.loaded / xhr.total * 100) + '% 已加载');
+                    const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
+                    showDebug('模型加载进度: ' + percent + '%');
                 },
                 (error) => {
-                    console.error('模型加载失败:', error);
+                    showDebug('模型加载失败: ' + error);
                     document.getElementById('error').textContent = '模型加载失败: ' + error;
                     document.getElementById('error').style.display = 'block';
                     document.getElementById('loading').style.display = 'none';
@@ -373,13 +432,20 @@
             if (isARMode && arToolkitSource) {
                 arToolkitSource.onResizeElement();
                 arToolkitSource.copyElementSizeTo(renderer.domElement);
+                
                 if (arToolkitContext && arToolkitContext.arController !== null) {
                     arToolkitSource.copyElementSizeTo(arToolkitContext.arController.canvas);
+                    
+                    // 确保相机矩阵也更新
+                    camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
                 }
+                
+                showDebug('AR界面尺寸已调整: ' + window.innerWidth + 'x' + window.innerHeight);
             } else {
                 // 3D模式调整
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
+                showDebug('3D界面尺寸已调整: ' + window.innerWidth + 'x' + window.innerHeight);
             }
             
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -388,7 +454,7 @@
         function animate3D() {
             if (isARMode) return;
             
-            requestAnimationFrame(animate3D);
+            window.tdAnimationFrame = requestAnimationFrame(animate3D);
             
             // 更新动画混合器
             if (mixer) {
@@ -406,23 +472,24 @@
         function animateAR() {
             if (!isARMode) return;
             
-            requestAnimationFrame(animateAR);
+            window.arAnimationFrame = requestAnimationFrame(animateAR);
             
             // 更新AR
             if (arToolkitContext && arToolkitSource && arToolkitSource.ready) {
                 arToolkitContext.update(arToolkitSource.domElement);
                 
                 // 检测标记是否被识别
-                let markerRoot = scene.getObjectByName('marker-root');
-                if (markerRoot && markerRoot.visible) {
+                if (markerRoot.visible) {
                     // 标记被识别，隐藏提示
                     if (document.getElementById('loading').style.display !== 'none') {
                         document.getElementById('loading').style.display = 'none';
+                        showDebug('标记已识别，模型可见');
                     }
                 } else {
                     // 标记未被识别，显示提示
                     if (document.getElementById('loading').style.display === 'none') {
                         document.getElementById('loading').style.display = 'block';
+                        showDebug('标记未识别，请对准标记');
                     }
                 }
             }
