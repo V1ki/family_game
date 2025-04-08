@@ -30,12 +30,13 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// 添加光源
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+// 添加环境光
+const ambientLight = new THREE.AmbientLight(0xffffff, 1); // 提高环境光强度
 scene.add(ambientLight);
 
-const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-directionalLight.position.set(10, 10, 10);
+// 添加方向光
+const directionalLight = new THREE.DirectionalLight(0xffffff, 2); // 提高方向光强度
+directionalLight.position.set(5, 10, 7); // 调整光源位置以更好地照亮模型
 scene.add(directionalLight);
 
 // 设置相机位置
