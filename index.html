@@ -167,11 +167,11 @@
             if (!arToolkitContext || !arToolkitSource || !arToolkitSource.ready) {
                 return;
             }
-
+            console.log('arToolkitSource', arToolkitSource);
             arToolkitContext.update(arToolkitSource.domElement)
 
             // update scene.visible if the marker is seen
-            scene.visible = camera.visible
+            scene.visible = true
         })
 
         //////////////////////////////////////////////////////////////////////////////////
