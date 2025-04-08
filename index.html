@@ -12,101 +12,158 @@
 </script>
 
 <body style='font-family: Monospace;'>
-    <div id="loading" style="position: absolute; top: 10px; left: 10px; background-color: rgba(0,0,0,0.6); color: white; padding: 10px; z-index: 999;">
+    <div id="loading"
+        style="position: absolute; top: 10px; left: 10px; background-color: rgba(0,0,0,0.6); color: white; padding: 10px; z-index: 999;">
         Loading 3D model, please wait...
     </div>
-    <div id="error" style="display: none; position: absolute; top: 10px; left: 10px; background-color: rgba(255,0,0,0.6); color: white; padding: 10px; z-index: 999;">
+    <div id="error"
+        style="display: none; position: absolute; top: 10px; left: 10px; background-color: rgba(255,0,0,0.6); color: white; padding: 10px; z-index: 999;">
     </div>
-    
-<script type="module">
-import * as THREE from 'three';
- import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 
-// 创建场景、相机和渲染器
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-camera.position.set(0, 2, 5); // 调整相机位置
-camera.lookAt(0, 0, 0);       // 让相机看向模型中心
+        // 创建场景、相机和渲染器
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
 
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; // 启用阻尼效果
+        controls.dampingFactor = 0.05;
+        
 
-// 添加环境光
-const ambientLight = new THREE.AmbientLight(0xffffff, 1); // 提高环境光强度
-scene.add(ambientLight);
+        camera.position.set(0, 2, 5); // 调整相机位置
+        camera.lookAt(0, 0, 0);       // 让相机看向模型中心
 
-// 添加方向光
-const directionalLight = new THREE.DirectionalLight(0xffffff, 2); // 提高方向光强度
-directionalLight.position.set(5, 10, 7); // 调整光源位置以更好地照亮模型
-scene.add(directionalLight);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        document.body.appendChild(renderer.domElement);
 
-// 设置相机位置
-camera.position.z = 5;
+        // 添加环境光
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1); // 提高环境光强度
+        scene.add(ambientLight);
 
-// 创建 GLTFLoader 实例
-const loader = new GLTFLoader();
+        // 添加方向光
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 2); // 提高方向光强度
+        directionalLight.position.set(5, 10, 7); // 调整光源位置以更好地照亮模型
+        scene.add(directionalLight);
+        const axesHelper = new THREE.AxesHelper(5);
+        scene.add(axesHelper);
 
-let mixer; // 动画混合器
+        const gridHelper = new THREE.GridHelper(10, 10);
+        scene.add(gridHelper);
 
-// 加载 GLTF 模型
-loader.load(
-    // 模型文件路径
-    './models/dodge_challenger_rt/scene.gltf',
-    // 成功回调
-    (gltf) => {
-        const model = gltf.scene; // 获取加载的模型
-        scene.add(model); // 将模型添加到场景中
+        // 添加多个方向光
+        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 2);
+        directionalLight1.position.set(5, 10, 7);
+        scene.add(directionalLight1);
 
-        console.log('模型加载成功:', model);
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 2);
+        directionalLight2.position.set(-5, -10, -7);
+        scene.add(directionalLight2);
+        // 设置相机位置
+        camera.position.z = 5;
+        const pointLight = new THREE.PointLight(0xffffff, 2);
+        pointLight.position.set(0, 5, 5);
+        scene.add(pointLight);
+        // 创建 GLTFLoader 实例
+        const loader = new GLTFLoader();
 
-        // 如果模型包含动画，初始化动画混合器
-        if (gltf.animations && gltf.animations.length > 0) {
-            mixer = new THREE.AnimationMixer(model); // 创建动画混合器
+        let mixer; // 动画混合器
 
-            // 遍历所有动画并播放第一个动画
-            gltf.animations.forEach((clip, index) => {
-                const action = mixer.clipAction(clip); // 创建动画动作
-                if (index === 0) {
-                    action.play(); // 播放第一个动画
+        // 加载 GLTF 模型
+        loader.load(
+            // 模型文件路径
+            './models/dodge_challenger_rt/scene.gltf',
+            // 成功回调
+            (gltf) => {
+                const model = gltf.scene; // 获取加载的模型
+
+
+                // 计算模型的边界框
+                const box = new THREE.Box3().setFromObject(model);
+                const center = new THREE.Vector3();
+                box.getCenter(center); // 获取模型中心
+                model.position.sub(center); // 将模型居中
+
+                // 缩放模型
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                const maxDimension = Math.max(size.x, size.y, size.z);
+                const scale = 1 / maxDimension; // 缩放到单位大小
+                model.scale.set(scale, scale, scale);
+
+
+                console.log('模型加载成功:', model);
+                // 遍历模型的所有子对象
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        console.log('材质:', child.material);
+                        console.log('几何体:', child.geometry);
+
+                        // 确保材质支持光照
+                        if (child.material) {
+                            child.material.side = THREE.DoubleSide; // 确保双面渲染
+                            child.material.needsUpdate = true;     // 更新材质
+                        }
+                        if (child.material.transparent) {
+                            child.material.depthWrite = false; // 禁用深度写入
+                            child.material.needsUpdate = true;
+                        }
+                    }
+                });
+
+                scene.add(model); // 将模型添加到场景中
+
+                // 如果模型包含动画，初始化动画混合器
+                if (gltf.animations && gltf.animations.length > 0) {
+                    mixer = new THREE.AnimationMixer(model); // 创建动画混合器
+
+                    // 遍历所有动画并播放第一个动画
+                    gltf.animations.forEach((clip, index) => {
+                        const action = mixer.clipAction(clip); // 创建动画动作
+                        if (index === 0) {
+                            action.play(); // 播放第一个动画
+                        }
+                    });
                 }
-            });
+            },
+            // 进度回调（可选）
+            (xhr) => {
+                console.log((xhr.loaded / xhr.total * 100) + '% 已加载');
+            },
+            // 错误回调
+            (error) => {
+                console.error('模型加载失败:', error);
+            }
+        );
+
+        // 渲染循环
+        let clock = new THREE.Clock(); // 用于计算时间差
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 更新动画混合器
+            if (mixer) {
+                const delta = clock.getDelta(); // 获取时间差
+                mixer.update(delta); // 更新动画
+            }
+            controls.update(); // 在每一帧更新控制器
+            renderer.render(scene, camera);
         }
-    },
-    // 进度回调（可选）
-    (xhr) => {
-        console.log((xhr.loaded / xhr.total * 100) + '% 已加载');
-    },
-    // 错误回调
-    (error) => {
-        console.error('模型加载失败:', error);
-    }
-);
+        animate();
 
-// 渲染循环
-let clock = new THREE.Clock(); // 用于计算时间差
-
-function animate() {
-    requestAnimationFrame(animate);
-
-    // 更新动画混合器
-    if (mixer) {
-        const delta = clock.getDelta(); // 获取时间差
-        mixer.update(delta); // 更新动画
-    }
-
-    renderer.render(scene, camera);
-}
-animate();
-
-// 监听窗口大小变化
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
-</script>
+        // 监听窗口大小变化
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
 
     <!-- <script type="module">
         import * as THREE from 'three'
