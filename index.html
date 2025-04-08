@@ -14,7 +14,7 @@
 <body style='font-family: Monospace; margin: 0; overflow: hidden;'>
     <div id="loading"
         style="position: absolute; top: 10px; left: 10px; background-color: rgba(0,0,0,0.6); color: white; padding: 10px; z-index: 999;">
-        请扫描AR标记显示3D模型...
+        AR模式：点击屏幕放置3D模型
     </div>
     <div id="error"
         style="display: none; position: absolute; top: 10px; left: 10px; background-color: rgba(255,0,0,0.6); color: white; padding: 10px; z-index: 999;">
@@ -45,13 +45,15 @@
         // 全局变量
         let scene, camera, renderer, model;
         let controls;
-        let arToolkitSource, arToolkitContext, arMarkerControls;
+        let arToolkitSource, arToolkitContext;
         let markerRoot;
         let mixer;
         let clock = new THREE.Clock();
         let isARMode = true; // 默认为AR模式
         let modelLoaded = false;
-        let modelAttached = false;
+        let placedModels = []; // 存储已放置的模型
+        let raycaster, mouse;
+        let arScene; // AR场景 - 用于点击放置模型
         
         function showDebug(message) {
             if (!DEBUG) return;
@@ -74,7 +76,11 @@
 
         // 创建场景、相机和渲染器
         function initScene() {
+            // 创建场景
             scene = new THREE.Scene();
+            
+            // 创建AR场景 - 用于放置模型
+            arScene = new THREE.Scene();
             
             // 创建渲染器
             renderer = new THREE.WebGLRenderer({ 
@@ -90,20 +96,26 @@
             renderer.domElement.style.top = '0px';
             renderer.domElement.style.left = '0px';
             document.body.appendChild(renderer.domElement);
+            
+            // 初始化射线投射器和鼠标坐标 - 用于点击检测
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
 
             // 创建标记根节点（在场景初始化时就创建）
             markerRoot = new THREE.Group();
             markerRoot.name = 'marker-root';
             scene.add(markerRoot);
             
+            // 添加灯光（在两种模式下都需要）
+            addLights(scene);
+            addLights(arScene);
+            
             // 加载模型
             loadModel();
 
-            // 处理窗口大小变化
+            // 处理窗口大小变化和点击事件
             window.addEventListener('resize', onWindowResize);
-            
-            // 添加灯光（在两种模式下都需要）
-            addLights();
+            renderer.domElement.addEventListener('click', onDocumentClick);
             
             showDebug('场景初始化完成');
         }
@@ -139,18 +151,12 @@
             // 更新加载提示
             document.getElementById('loading').style.display = 'none';
 
-            // 如果模型已加载，将其从标记中移出并添加到场景中
+            // 如果模型已加载，显示在3D场景
             if (model && modelLoaded) {
-                // 如果模型附加在标记上，移除它
-                if (modelAttached) {
-                    markerRoot.remove(model);
-                    modelAttached = false;
-                }
-                
-                // 添加到场景并调整位置
-                scene.add(model);
-                model.visible = true;
-                centerModel();
+                // 复制一个模型展示
+                const modelCopy = model.clone();
+                scene.add(modelCopy);
+                centerModel(modelCopy);
                 showDebug('3D模式：模型已居中显示');
             }
 
@@ -185,22 +191,8 @@
             document.getElementById('3d-mode').style.backgroundColor = '';
             
             // 更新加载提示
-            document.getElementById('loading').textContent = '请扫描AR标记显示3D模型...';
+            document.getElementById('loading').textContent = 'AR模式：点击屏幕放置3D模型';
             document.getElementById('loading').style.display = 'block';
-            
-            // 如果模型已加载，将其从场景中移出并添加到标记中
-            if (model && modelLoaded) {
-                // 如果模型已经在场景中，移除它
-                if (!modelAttached) {
-                    scene.remove(model);
-                }
-                
-                // 添加到标记上
-                markerRoot.add(model);
-                adjustModelForAR();
-                modelAttached = true;
-                showDebug('AR模式：模型已附加到标记');
-            }
             
             // 开始AR渲染循环
             cancelAnimationFrame(window.tdAnimationFrame);
@@ -250,7 +242,8 @@
                 cameraParametersUrl: ArToolkitContext.baseURL + './models/camera_para.dat',
                 detectionMode: 'mono',
                 maxDetectionRate: 60,
-                patternRatio: 0.75, // 如果标记检测不好可以调整这个值
+                canvasWidth: arToolkitSource.domElement.videoWidth,
+                canvasHeight: arToolkitSource.domElement.videoHeight,
                 imageSmoothingEnabled: true,
                 debug: DEBUG
             });
@@ -262,66 +255,89 @@
                 
                 showDebug('AR 上下文初始化成功');
                 
-                // 创建AR标记控制器
-                arMarkerControls = new ArMarkerControls(arToolkitContext, markerRoot, {
-                    type: 'pattern',
-                    patternUrl: ArToolkitContext.baseURL + 'pattern-marker.patt',
-                    changeMatrixMode: 'modelViewMatrix'
-                });
-                
-                showDebug('AR 标记控制器创建成功');
-                
-                // 如果模型已加载但尚未附加到标记
-                if (model && modelLoaded && !modelAttached) {
-                    markerRoot.add(model);
-                    adjustModelForAR();
-                    modelAttached = true;
-                    showDebug('模型已附加到AR标记');
-                }
+                // 不再需要创建标记控制器
+                showDebug('AR 初始化完成，可以点击屏幕放置模型');
             });
         }
         
-        function getSourceOrientation() {
-            if (!arToolkitSource) {
-                return null;
-            }
+        function onDocumentClick(event) {
+            if (!isARMode || !modelLoaded) return;
             
-            if (arToolkitSource.domElement.videoWidth > arToolkitSource.domElement.videoHeight) {
-                return 'landscape';
-            } else {
-                return 'portrait';
-            }
+            // 更新鼠标位置
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            showDebug('屏幕点击位置: ' + mouse.x.toFixed(2) + ', ' + mouse.y.toFixed(2));
+            
+            // 放置模型到点击位置
+            placeModelAtClick();
+        }
+        
+        function placeModelAtClick() {
+            if (!model || !modelLoaded) return;
+            
+            // 创建一个虚拟平面，在距离相机1米的位置
+            const planeNormal = new THREE.Vector3(0, 0, 1);
+            const planeConstant = -1; // 平面距离
+            const plane = new THREE.Plane(planeNormal, planeConstant);
+            
+            // 设置射线
+            raycaster.setFromCamera(mouse, camera);
+            
+            // 计算射线与平面的交点
+            const targetPoint = new THREE.Vector3();
+            raycaster.ray.intersectPlane(plane, targetPoint);
+            
+            showDebug('放置模型到位置: ' + 
+                      targetPoint.x.toFixed(2) + ', ' + 
+                      targetPoint.y.toFixed(2) + ', ' + 
+                      targetPoint.z.toFixed(2));
+            
+            // 克隆原始模型
+            const modelCopy = model.clone();
+            
+            // 设置模型位置
+            modelCopy.position.copy(targetPoint);
+            
+            // 调整模型大小和方向
+            modelCopy.scale.set(0.01, 0.01, 0.01);
+            modelCopy.rotation.set(-Math.PI/2, 0, 0);
+            
+            // 添加到AR场景
+            arScene.add(modelCopy);
+            placedModels.push(modelCopy);
+            
+            showDebug('模型已放置，当前共有 ' + placedModels.length + ' 个模型');
+            
+            // 隐藏加载提示
+            document.getElementById('loading').style.display = 'none';
         }
         
         function adjustModelForAR() {
             if (!model) return;
             
-            // 调整模型比例和位置以适合AR显示
-            model.scale.set(0.01, 0.01, 0.01); // 调小比例让它更清晰
-            model.position.set(0, 0.25, 0); // 稍微抬高一点，避免埋在标记里
-            model.rotation.x = -Math.PI/2; // 调整方向
-            model.visible = true;
-            
-            showDebug('模型已调整为AR模式');
+            // 设置原始模型不可见（仅用于克隆）
+            model.visible = false;
+            showDebug('原始模型已准备好进行克隆和放置');
         }
         
-        function centerModel() {
-            if (!model) return;
+        function centerModel(modelToCenter) {
+            if (!modelToCenter) return;
             
             // 计算模型的边界框
-            const box = new THREE.Box3().setFromObject(model);
+            const box = new THREE.Box3().setFromObject(modelToCenter);
             const center = new THREE.Vector3();
             box.getCenter(center);
             
             // 将模型居中
-            model.position.sub(center);
+            modelToCenter.position.sub(center);
             
             // 计算适当的缩放比例
             const size = new THREE.Vector3();
             box.getSize(size);
             const maxDimension = Math.max(size.x, size.y, size.z);
             const scale = 1 / maxDimension; // 缩放到单位大小
-            model.scale.set(scale, scale, scale);
+            modelToCenter.scale.set(scale, scale, scale);
             
             showDebug('模型已居中，尺寸: ' + size.x.toFixed(2) + 'x' + 
                       size.y.toFixed(2) + 'x' + size.z.toFixed(2));
@@ -344,24 +360,24 @@
             scene.remove(scene.getObjectByName('grid-helper'));
         }
         
-        function addLights() {
+        function addLights(targetScene) {
             // 添加环境光
             const ambientLight = new THREE.AmbientLight(0xffffff, 1);
-            scene.add(ambientLight);
+            targetScene.add(ambientLight);
             
             // 添加方向光
             const directionalLight1 = new THREE.DirectionalLight(0xffffff, 2);
             directionalLight1.position.set(5, 10, 7);
-            scene.add(directionalLight1);
+            targetScene.add(directionalLight1);
             
             const directionalLight2 = new THREE.DirectionalLight(0xffffff, 2);
             directionalLight2.position.set(-5, -10, -7);
-            scene.add(directionalLight2);
+            targetScene.add(directionalLight2);
             
             // 添加点光源
             const pointLight = new THREE.PointLight(0xffffff, 2);
             pointLight.position.set(0, 5, 5);
-            scene.add(pointLight);
+            targetScene.add(pointLight);
         }
         
         function loadModel() {
@@ -391,17 +407,12 @@
                     });
                     
                     if (isARMode) {
-                        // 添加到标记上
-                        if (markerRoot) {
-                            markerRoot.add(model);
-                            adjustModelForAR();
-                            modelAttached = true;
-                            showDebug('模型已附加到AR标记');
-                        }
+                        // 准备模型用于AR放置
+                        adjustModelForAR();
                     } else {
                         // 3D模式直接添加到场景
                         scene.add(model);
-                        centerModel();
+                        centerModel(model);
                         document.getElementById('loading').style.display = 'none';
                     }
                     
@@ -477,21 +488,6 @@
             // 更新AR
             if (arToolkitContext && arToolkitSource && arToolkitSource.ready) {
                 arToolkitContext.update(arToolkitSource.domElement);
-                
-                // 检测标记是否被识别
-                if (markerRoot.visible) {
-                    // 标记被识别，隐藏提示
-                    if (document.getElementById('loading').style.display !== 'none') {
-                        document.getElementById('loading').style.display = 'none';
-                        showDebug('标记已识别，模型可见');
-                    }
-                } else {
-                    // 标记未被识别，显示提示
-                    if (document.getElementById('loading').style.display === 'none') {
-                        document.getElementById('loading').style.display = 'block';
-                        showDebug('标记未识别，请对准标记');
-                    }
-                }
             }
             
             // 更新动画混合器
@@ -500,8 +496,19 @@
                 mixer.update(delta);
             }
             
-            // 渲染场景
+            // 首先渲染AR摄像头场景
             renderer.render(scene, camera);
+            
+            // 禁用深度测试，以便放置的模型始终可见
+            renderer.autoClear = false;
+            
+            // 然后渲染AR场景中的所有已放置模型
+            if (arScene) {
+                renderer.render(arScene, camera);
+            }
+            
+            // 重新启用自动清除
+            renderer.autoClear = true;
         }
     </script>
 </body>
