@@ -274,41 +274,49 @@
         }
         
         function placeModelAtClick() {
-            if (!model || !modelLoaded) return;
-            
+            if (!model || !modelLoaded) {
+                showDebug('模型未加载，无法放置');
+                return;
+            }
+
             // 创建一个虚拟平面，在距离相机1米的位置
-            const planeNormal = new THREE.Vector3(0, 0, 1);
-            const planeConstant = -1; // 平面距离
+            const planeNormal = new THREE.Vector3(0, 0, -1); // 平面法向量指向相机
+            const planeConstant = 0; // 平面通过相机原点
             const plane = new THREE.Plane(planeNormal, planeConstant);
-            
+
             // 设置射线
             raycaster.setFromCamera(mouse, camera);
-            
+
             // 计算射线与平面的交点
             const targetPoint = new THREE.Vector3();
-            raycaster.ray.intersectPlane(plane, targetPoint);
-            
+            const intersection = raycaster.ray.intersectPlane(plane, targetPoint);
+
+            if (!intersection) {
+                showDebug('射线未与平面相交，无法放置模型');
+                return;
+            }
+
             showDebug('放置模型到位置: ' + 
                       targetPoint.x.toFixed(2) + ', ' + 
                       targetPoint.y.toFixed(2) + ', ' + 
                       targetPoint.z.toFixed(2));
-            
+
             // 克隆原始模型
             const modelCopy = model.clone();
-            
+
             // 设置模型位置
             modelCopy.position.copy(targetPoint);
-            
+
             // 调整模型大小和方向
             modelCopy.scale.set(0.01, 0.01, 0.01);
-            modelCopy.rotation.set(-Math.PI/2, 0, 0);
-            
+            modelCopy.rotation.set(-Math.PI / 2, 0, 0);
+
             // 添加到AR场景
             arScene.add(modelCopy);
             placedModels.push(modelCopy);
-            
+
             showDebug('模型已放置，当前共有 ' + placedModels.length + ' 个模型');
-            
+
             // 隐藏加载提示
             document.getElementById('loading').style.display = 'none';
         }
@@ -482,31 +490,31 @@
         
         function animateAR() {
             if (!isARMode) return;
-            
+
             window.arAnimationFrame = requestAnimationFrame(animateAR);
-            
+
             // 更新AR
             if (arToolkitContext && arToolkitSource && arToolkitSource.ready) {
                 arToolkitContext.update(arToolkitSource.domElement);
             }
-            
+
             // 更新动画混合器
             if (mixer) {
                 const delta = clock.getDelta();
                 mixer.update(delta);
             }
-            
+
             // 首先渲染AR摄像头场景
             renderer.render(scene, camera);
-            
+
             // 禁用深度测试，以便放置的模型始终可见
             renderer.autoClear = false;
-            
+
             // 然后渲染AR场景中的所有已放置模型
             if (arScene) {
                 renderer.render(arScene, camera);
             }
-            
+
             // 重新启用自动清除
             renderer.autoClear = true;
         }
