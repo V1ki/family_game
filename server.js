@@ -34,9 +34,12 @@ const asrApiKey = process.env.DASHSCOPE_API_KEY || ''; // 使用同一个API Key
 // 将webm音频转换为wav格式
 function convertWebmToWav(webmBuffer) {
     return new Promise((resolve, reject) => {
+        // 确定临时目录位置（Vercel 环境使用 /tmp, 本地环境使用项目目录）
+        const tempDir = process.env.VERCEL ? '/tmp' : __dirname;
+        
         // 创建临时文件名
-        const tempInputFile = path.join(__dirname, `temp_input_${Date.now()}.webm`);
-        const tempOutputFile = path.join(__dirname, `temp_output_${Date.now()}.wav`);
+        const tempInputFile = path.join(tempDir, `temp_input_${Date.now()}.webm`);
+        const tempOutputFile = path.join(tempDir, `temp_output_${Date.now()}.wav`);
         
         // 写入webm数据到临时文件
         fs.writeFileSync(tempInputFile, webmBuffer);
