@@ -84,10 +84,10 @@ function convertWebmToWav(webmBuffer) {
 }
 
 // WebSocket连接到阿里云服务
-function connectToCosyVoice(text, onData, onFinish, onError) {
+function connectToCosyVoice(text, rate, pitch, onData, onFinish, onError) { // Add rate and pitch parameters
     // 阿里云WebSocket URL
     const url = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
-    
+
     // 创建WebSocket客户端
     const ws = new WebSocket(url, {
         headers: {
@@ -95,15 +95,15 @@ function connectToCosyVoice(text, onData, onFinish, onError) {
             'X-DashScope-DataInspection': 'enable'
         }
     });
-    
+
     // 任务ID
     const taskId = uuidv4();
     let taskStarted = false;
     let audioData = Buffer.alloc(0);
-    
+
     ws.on('open', function open() {
         console.log('已连接到CosyVoice服务');
-        
+
         // 发送run-task指令
         const runTask = {
             header: {
@@ -118,20 +118,20 @@ function connectToCosyVoice(text, onData, onFinish, onError) {
                 model: "cosyvoice-v1",
                 parameters: {
                     text_type: "PlainText",
-                    voice: "longtong", // 使用龙彤音色
+                    voice: "longjielidou", // 使用龙杰力豆音色
                     format: "mp3",
                     sample_rate: 22050,
                     volume: 50,
-                    rate: 1,
-                    pitch: 1
+                    rate: rate, // Use the passed rate
+                    pitch: pitch // Use the passed pitch
                 },
                 input: {}
             }
         };
-        
+
         ws.send(JSON.stringify(runTask));
     });
-    
+
     ws.on('message', function incoming(data) {
         // 如果是二进制数据（音频流）
         if (data instanceof Buffer) {
@@ -142,10 +142,10 @@ function connectToCosyVoice(text, onData, onFinish, onError) {
             // 如果是文本消息（JSON格式的事件）
             const message = JSON.parse(data.toString());
             console.log('收到事件:', message.header.event);
-            
+
             if (message.header.event === 'task-started') {
                 taskStarted = true;
-                
+
                 // 发送continue-task指令
                 const continueTask = {
                     header: {
@@ -159,9 +159,9 @@ function connectToCosyVoice(text, onData, onFinish, onError) {
                         }
                     }
                 };
-                
+
                 ws.send(JSON.stringify(continueTask));
-                
+
                 // 发送finish-task指令
                 const finishTask = {
                     header: {
@@ -173,7 +173,7 @@ function connectToCosyVoice(text, onData, onFinish, onError) {
                         input: {}
                     }
                 };
-                
+
                 ws.send(JSON.stringify(finishTask));
             } else if (message.header.event === 'task-finished') {
                 onFinish(audioData);
@@ -184,12 +184,12 @@ function connectToCosyVoice(text, onData, onFinish, onError) {
             }
         }
     });
-    
+
     ws.on('error', function error(err) {
         console.error('WebSocket错误:', err);
         onError('连接错误: ' + err.message);
     });
-    
+
     ws.on('close', function close() {
         console.log('与CosyVoice服务的连接已关闭');
     });
@@ -197,33 +197,40 @@ function connectToCosyVoice(text, onData, onFinish, onError) {
 
 // 处理文本到语音的转换请求
 app.post('/api/synthesize', (req, res) => {
-    const { text } = req.body;
-    console.log('Received text for synthesis:', text);
-    
+    const { text, rate, pitch } = req.body; // Destructure rate and pitch from request body
+    console.log('Received text for synthesis:', text, 'Rate:', rate, 'Pitch:', pitch);
+
     if (!text) {
         return res.status(400).json({ error: '缺少文本参数' });
     }
-    
+
+    // Provide default values if rate or pitch are not sent
+    const synthesisRate = rate !== undefined ? rate : 1.0;
+    const synthesisPitch = pitch !== undefined ? pitch : 1.0;
+
+
     if (!apiKey) {
         console.error('API密钥未设置');
         return res.status(500).json({ error: 'API密钥未设置' });
     }
-    
+
     // 创建唯一的文件名
     const fileName = `audio_${Date.now()}.mp3`;
-    
+
     // 在 Vercel 环境中使用 /tmp 目录，在本地使用 audio 目录
     const audioDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, 'audio');
     const filePath = path.join(audioDir, fileName);
-    
+
     // 确保目录存在
     if (!fs.existsSync(audioDir)) {
         fs.mkdirSync(audioDir, { recursive: true });
     }
-    
+
     // 使用WebSocket与阿里云服务通信
     connectToCosyVoice(
         text,
+        synthesisRate, // Pass rate
+        synthesisPitch, // Pass pitch
         (chunk) => {
             // 这是流式数据，但我们在REST API中不使用
         },
@@ -234,7 +241,7 @@ app.post('/api/synthesize', (req, res) => {
                     console.error('保存音频文件失败:', err);
                     return res.status(500).json({ error: '保存音频文件失败' });
                 }
-                
+
                 // Vercel 环境中不能直接返回文件路径，需要将数据作为 base64 返回
                 if (process.env.VERCEL) {
                     // 在 Vercel 环境中，直接返回音频数据的 base64 编码
