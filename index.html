@@ -299,9 +299,6 @@
     </div>
     
     <script>
-        // 建立WebSocket连接
-        const socket = new WebSocket(`ws://${window.location.host}`);
-        
         // 音频上下文和录音对象
         let audioContext;
         let mediaRecorder;
@@ -347,50 +344,8 @@
             recordButton.addEventListener('touchend', stopRecording);
             recordButton.addEventListener('mouseup', stopRecording);
             
-            // WebSocket事件
-            socket.addEventListener('open', function(event) {
-                updateStatus('已连接到服务器');
-            });
-            
-            socket.addEventListener('message', function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.type === 'audio_chunk') {
-                        // 接收音频数据块（语音合成）
-                        processAudioChunk(data.chunk);
-                    } 
-                    else if (data.type === 'audio_complete') {
-                        // 接收完整音频数据（语音合成）
-                        finishAudioProcessing(data.fullAudio);
-                    } 
-                    else if (data.type === 'recognition_result') {
-                        // 接收语音识别结果
-                        console.log('收到识别结果:', data);
-                        
-                        // 更新识别文本
-                        if (data.isPartial) {
-                            updateRecognitionText(data.text);
-                        } else {
-                            // 完成识别
-                            finishRecognition(data.text);
-                        }
-                    } 
-                    else if (data.type === 'error') {
-                        showErrorMessage(data.message);
-                    }
-                } catch (e) {
-                    console.error('解析消息时出错:', e);
-                }
-            });
-            
-            socket.addEventListener('close', function(event) {
-                updateStatus('与服务器的连接已关闭');
-            });
-            
-            socket.addEventListener('error', function(event) {
-                updateStatus('连接错误');
-            });
+            // 设置连接状态为已连接
+            updateStatus('已准备就绪');
         });
         
         // 更新状态文本
@@ -467,47 +422,16 @@
             });
         }
         
-        // 处理音频数据块（语音合成流式处理）
-        function processAudioChunk(base64Chunk) {
-            // 这里可以实现流式音频处理逻辑
-            console.log('收到音频数据块');
-        }
-        
-        // 完成音频处理（收到完整音频）
-        function finishAudioProcessing(fullAudioBase64) {
-            // 播放完整的合成语音
-            const audioData = base64ToArrayBuffer(fullAudioBase64);
-            playAudio(audioData);
-        }
-        
-        // 将Base64转换为ArrayBuffer
-        function base64ToArrayBuffer(base64) {
-            const binaryString = window.atob(base64);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            
-            return bytes.buffer;
-        }
-        
-        // 播放音频
-        function playAudio(audioData) {
-            // 创建音频上下文（如果不存在）
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            
-            // 解码音频数据
-            audioContext.decodeAudioData(audioData, function(buffer) {
-                const source = audioContext.createBufferSource();
-                source.buffer = buffer;
-                source.connect(audioContext.destination);
-                source.start(0);
-                
-                // 完成消息处理
+        // 播放音频 (不再需要处理数据块和完成音频处理函数，因为我们直接使用Audio元素播放URL)
+        function playAudio(audioUrl) {
+            const audioElement = new Audio(audioUrl);
+            audioElement.onended = function() {
+                // 播放完成后处理下一条消息
+                messageAnimationInProgress = false;
+                processNextMessage();
+            };
+            audioElement.play().catch(error => {
+                console.error('播放音频失败:', error);
                 messageAnimationInProgress = false;
                 processNextMessage();
             });
@@ -548,21 +472,56 @@
             addMessage(message, 'received');
             
             // 发送消息到服务器进行语音合成
-            socket.send(JSON.stringify({ 
-                type: 'synthesize', 
-                text: message 
-            }));
+            fetch('/api/synthesize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ text: message })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('语音合成请求失败');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    // 播放合成的音频（处理两种格式：URL 或 Base64）
+                    const audioElement = new Audio();
+                    
+                    if (data.isBase64) {
+                        // 处理 base64 格式的音频数据
+                        audioElement.src = data.audioBase64;
+                    } else {
+                        // 处理音频 URL
+                        audioElement.src = data.audioUrl;
+                    }
+                    
+                    audioElement.onended = function() {
+                        // 播放完成后处理下一条消息
+                        messageAnimationInProgress = false;
+                        processNextMessage();
+                    };
+                    audioElement.play().catch(error => {
+                        console.error('播放音频失败:', error);
+                        messageAnimationInProgress = false;
+                        processNextMessage();
+                    });
+                } else {
+                    throw new Error(data.error || '语音合成失败');
+                }
+            })
+            .catch(error => {
+                console.error('语音合成错误:', error);
+                showErrorMessage('语音合成失败: ' + error.message);
+                messageAnimationInProgress = false;
+                processNextMessage();
+            });
         }
         
         // 发送音频到服务器进行识别
         function sendAudioForRecognition(audioBlob) {
-            // 检查WebSocket连接
-            if (!socket || socket.readyState !== WebSocket.OPEN) {
-                console.error('WebSocket未连接');
-                showErrorMessage('服务器连接已断开，请刷新页面重试');
-                return;
-            }
-            
             console.log('发送音频数据进行识别，大小:', audioBlob.size, '字节');
             
             // 如果录音时长太短，显示提示
@@ -577,8 +536,38 @@
                 return;
             }
             
-            // 直接发送Blob数据
-            socket.send(audioBlob);
+            // 创建FormData来发送二进制数据
+            const formData = new FormData();
+            formData.append('audio', audioBlob);
+            
+            // 发送HTTP请求
+            fetch('/api/recognize', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('语音识别请求失败');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.text) {
+                    // 完成识别
+                    finishRecognition(data.text);
+                } else {
+                    throw new Error(data.error || '未能识别语音');
+                }
+            })
+            .catch(error => {
+                console.error('语音识别错误:', error);
+                // 移除临时的识别中消息
+                const pendingMessage = document.getElementById('pending-recognition');
+                if (pendingMessage) {
+                    pendingMessage.remove();
+                }
+                showErrorMessage('语音识别失败: ' + error.message);
+            });
         }
         
         // 添加发送中的消息气泡
