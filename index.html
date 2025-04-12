@@ -1,522 +1,712 @@
 <!DOCTYPE html>
-<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-<!-- import three.js and ar-threex library as a module-->
-<script type="importmap">
-	{
-      "imports": {
-		"threex": "./js/ar-threex.mjs",
-        "three": "https://cdn.jsdelivr.net/npm/three@0.175.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/"
-      }
-    }
-</script>
-
-<body style='font-family: Monospace; margin: 0; overflow: hidden;'>
-    <div id="loading"
-        style="position: absolute; top: 10px; left: 10px; background-color: rgba(0,0,0,0.6); color: white; padding: 10px; z-index: 999;">
-        AR模式：点击屏幕放置3D模型
-    </div>
-    <div id="error"
-        style="display: none; position: absolute; top: 10px; left: 10px; background-color: rgba(255,0,0,0.6); color: white; padding: 10px; z-index: 999;">
-    </div>
-    <div id="mode-switch"
-        style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background-color: rgba(0,0,0,0.6); color: white; padding: 10px; z-index: 999; border-radius: 5px;">
-        <button id="ar-mode" style="padding: 8px 15px; margin-right: 10px; cursor: pointer;">AR 模式</button>
-        <button id="3d-mode" style="padding: 8px 15px; cursor: pointer;">3D 模式</button>
-    </div>
-
-    <div id="debug-info" 
-        style="position: absolute; top: 50px; left: 10px; background-color: rgba(0,0,255,0.6); color: white; padding: 10px; z-index: 999; display: none;">
-        调试信息将显示在这里
-    </div>
-
-    <script type="module">
-        import * as THREE from 'three';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { ArToolkitSource, ArToolkitContext, ArMarkerControls } from 'threex';
-
-        // 设置AR基础URL
-        ArToolkitContext.baseURL = './';
-
-        // 调试模式 - 设置为true可以显示更多调试信息
-        const DEBUG = true;
-        
-        // 全局变量
-        let scene, camera, renderer, model;
-        let controls;
-        let arToolkitSource, arToolkitContext;
-        let markerRoot;
-        let mixer;
-        let clock = new THREE.Clock();
-        let isARMode = true; // 默认为AR模式
-        let modelLoaded = false;
-        let placedModels = []; // 存储已放置的模型
-        let raycaster, mouse;
-        let arScene; // AR场景 - 用于点击放置模型
-        
-        function showDebug(message) {
-            if (!DEBUG) return;
-            
-            const debugElement = document.getElementById('debug-info');
-            debugElement.style.display = 'block';
-            debugElement.textContent = message;
-            console.log(message);
-        }
-
-        // 初始化场景
-        initScene();
-
-        // 初始化AR模式按钮
-        document.getElementById('ar-mode').addEventListener('click', enableARMode);
-        document.getElementById('3d-mode').addEventListener('click', enable3DMode);
-        
-        // 默认进入AR模式
-        enableARMode();
-
-        // 创建场景、相机和渲染器
-        function initScene() {
-            // 创建场景
-            scene = new THREE.Scene();
-            
-            // 创建AR场景 - 用于放置模型
-            arScene = new THREE.Scene();
-            
-            // 创建渲染器
-            renderer = new THREE.WebGLRenderer({ 
-                antialias: true, 
-                alpha: true,
-                preserveDrawingBuffer: true 
-            });
-            renderer.setClearColor(new THREE.Color('lightgrey'), 0);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.outputEncoding = THREE.sRGBEncoding;
-            renderer.domElement.style.position = 'absolute';
-            renderer.domElement.style.top = '0px';
-            renderer.domElement.style.left = '0px';
-            document.body.appendChild(renderer.domElement);
-            
-            // 初始化射线投射器和鼠标坐标 - 用于点击检测
-            raycaster = new THREE.Raycaster();
-            mouse = new THREE.Vector2();
-
-            // 创建标记根节点（在场景初始化时就创建）
-            markerRoot = new THREE.Group();
-            markerRoot.name = 'marker-root';
-            scene.add(markerRoot);
-            
-            // 添加灯光（在两种模式下都需要）
-            addLights(scene);
-            addLights(arScene);
-            
-            // 加载模型
-            loadModel();
-
-            // 处理窗口大小变化和点击事件
-            window.addEventListener('resize', onWindowResize);
-            renderer.domElement.addEventListener('click', onDocumentClick);
-            
-            showDebug('场景初始化完成');
-        }
-
-        function enable3DMode() {
-            isARMode = false;
-            showDebug('切换到3D模式');
-            
-            // 移除可能存在的AR相机
-            if (scene.getObjectByName('ar-camera')) {
-                scene.remove(scene.getObjectByName('ar-camera'));
-            }
-            
-            // 设置透视相机
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 2, 5);
-            camera.lookAt(0, 0, 0);
-            camera.name = '3d-camera';
-            scene.add(camera);
-
-            // 添加OrbitControls
-            controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
-
-            // 添加辅助对象
-            addHelpers();
-            
-            // 更新按钮状态
-            document.getElementById('3d-mode').style.backgroundColor = '#4CAF50';
-            document.getElementById('ar-mode').style.backgroundColor = '';
-            
-            // 更新加载提示
-            document.getElementById('loading').style.display = 'none';
-
-            // 如果模型已加载，显示在3D场景
-            if (model && modelLoaded) {
-                // 复制一个模型展示
-                const modelCopy = model.clone();
-                scene.add(modelCopy);
-                centerModel(modelCopy);
-                showDebug('3D模式：模型已居中显示');
-            }
-
-            // 开始渲染循环
-            cancelAnimationFrame(window.arAnimationFrame);
-            animate3D();
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Family Game - 小侦探冒险</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
         }
         
-        function enableARMode() {
-            isARMode = true;
-            showDebug('切换到AR模式');
-            
-            // 清除3D模式元素
-            if (controls) {
-                controls.dispose();
-                controls = null;
-            }
-            
-            // 移除辅助对象
-            removeHelpers();
-            
-            // 设置AR相机
-            camera = new THREE.Camera();
-            camera.name = 'ar-camera';
-            scene.add(camera);
-            
-            // 初始化AR
-            initARToolkit();
-            
-            // 更新按钮状态
-            document.getElementById('ar-mode').style.backgroundColor = '#4CAF50';
-            document.getElementById('3d-mode').style.backgroundColor = '';
-            
-            // 更新加载提示
-            document.getElementById('loading').textContent = 'AR模式：点击屏幕放置3D模型';
-            document.getElementById('loading').style.display = 'block';
-            
-            // 开始AR渲染循环
-            cancelAnimationFrame(window.tdAnimationFrame);
-            animateAR();
+        body {
+            background-color: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
         
-        function initARToolkit() {
-            // 创建AR源
-            arToolkitSource = new ArToolkitSource({
-                sourceType: 'webcam',
-                sourceWidth: window.innerWidth > window.innerHeight ? 640 : 480,
-                sourceHeight: window.innerWidth > window.innerHeight ? 480 : 640,
-                displayWidth: window.innerWidth,
-                displayHeight: window.innerHeight,
-            });
+        .header {
+            background-color: #4a6fa5;
+            color: white;
+            text-align: center;
+            padding: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 20px;
+            font-weight: 500;
+        }
+        
+        .status {
+            font-size: 12px;
+            margin-top: 5px;
+            opacity: 0.8;
+        }
+        
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            background: url('data:image/png;base64,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');
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+        }
+        
+        .message.received {
+            justify-content: flex-start;
+        }
+        
+        .message.sent {
+            justify-content: flex-end;
+        }
+        
+        .message-bubble {
+            max-width: 80%;
+            padding: 10px 15px;
+            border-radius: 18px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+        }
+        
+        .message.received .message-bubble {
+            background-color: white;
+            border-bottom-left-radius: 5px;
+        }
+        
+        .message.sent .message-bubble {
+            background-color: #dcf8c6;
+            border-bottom-right-radius: 5px;
+        }
+        
+        .audio-wave {
+            display: flex;
+            align-items: center;
+            height: 25px;
+        }
+        
+        .audio-wave .bar {
+            width: 3px;
+            margin: 0 1px;
+            background-color: #4a6fa5;
+            height: 5px;
+        }
+        
+        .message.received .audio-wave .bar {
+            background-color: #4a6fa5;
+        }
+        
+        .message.sent .audio-wave .bar {
+            background-color: #2e7d32;
+        }
+        
+        .message.received .audio-time {
+            margin-left: 5px;
+            font-size: 12px;
+            color: #999;
+        }
+        
+        .message.sent .audio-time {
+            margin-right: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .bottom-controls {
+            padding: 15px;
+            background-color: white;
+            border-top: 1px solid #e6e6e6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .record-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background-color: #4a6fa5;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            transition: all 0.2s;
+            font-size: 24px;
+            border: none;
+            outline: none;
+            cursor: pointer;
+        }
+        
+        .record-button:active {
+            background-color: #e53935;
+            transform: scale(0.95);
+        }
+        
+        .record-button i {
+            font-size: 28px;
+        }
+        
+        .record-text {
+            position: fixed;
+            bottom: 100px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: #555;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .record-text.active {
+            display: block;
+        }
+        
+        .intro-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            z-index: 1000;
+        }
+        
+        .intro-title {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        
+        .intro-text {
+            font-size: 16px;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+        
+        .start-button {
+            background-color: #4a6fa5;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .start-button:hover {
+            background-color: #3a5a80;
+        }
+        
+        .clue-input {
+            position: fixed;
+            bottom: 100px;
+            left: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            display: none;
+            z-index: 100;
+        }
+        
+        .clue-input input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        
+        .clue-input button {
+            background-color: #4a6fa5;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        @keyframes wave {
+            0% { height: 5px; }
+            50% { height: 15px; }
+            100% { height: 5px; }
+        }
+        
+        .message.playing .audio-wave .bar {
+            animation: wave 1.2s ease-in-out infinite;
+        }
+        
+        .message.playing .bar:nth-child(2) { animation-delay: 0.1s; }
+        .message.playing .bar:nth-child(3) { animation-delay: 0.2s; }
+        .message.playing .bar:nth-child(4) { animation-delay: 0.3s; }
+        .message.playing .bar:nth-child(5) { animation-delay: 0.4s; }
+        .message.playing .bar:nth-child(6) { animation-delay: 0.5s; }
+        .message.playing .bar:nth-child(7) { animation-delay: 0.6s; }
+    </style>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</head>
+<body>
+    <!-- 游戏介绍遮罩 -->
+    <div class="intro-overlay" id="intro-overlay">
+        <h1 class="intro-title">小侦探冒险</h1>
+        <p class="intro-text">
+            你收到了一条来自神秘语音消息。他似乎被困在某个地方，需要你的帮助！
+            <br><br>
+            通过收集线索，解开谜题，帮助神秘人找到回家的路吧！
+            <br><br>
+            提示：按住录音按钮与神秘人交流，仅支持语音消息。
+        </p>
+        <button class="start-button" id="startButton">开始冒险</button>
+    </div>
 
-            arToolkitSource.init(function onReady() {
-                showDebug('AR 摄像头初始化成功');
+    <!-- 头部 -->
+    <div class="header">
+        <h1>神秘人</h1>
+        <div class="status" id="connectionStatus">连接中...</div>
+    </div>
+    
+    <!-- 聊天区域 -->
+    <div class="chat-container" id="chatContainer">
+        <!-- 消息将在这里动态添加 -->
+    </div>
+    
+    <!-- 底部控制区 -->
+    <div class="bottom-controls">
+        <button class="record-button" id="recordButton">
+            <i class="material-icons">mic</i>
+        </button>
+    </div>
+    
+    <!-- 录音提示 -->
+    <div class="record-text" id="recordText">
+        正在录音... 松开发送
+    </div>
+    
+    <!-- 线索输入框 -->
+    <div class="clue-input" id="clueInput">
+        <input type="text" id="clueCode" placeholder="输入你找到的线索密码...">
+        <button onclick="submitClue()">提交</button>
+    </div>
+    
+    <script>
+        // 建立WebSocket连接
+        const socket = new WebSocket(`ws://${window.location.host}`);
+        
+        // 音频上下文和录音对象
+        let audioContext;
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        let recordingStartTime;
+        
+        // 游戏状态
+        const gameState = {
+            stage: 0, // 游戏阶段，0表示开始，随着游戏进行逐步增加
+            items: [], // 收集到的物品
+            clues: []  // 收集到的线索
+        };
+        
+        // 游戏提示消息数组
+        const gameMsgs = [
+            "欢迎来到小侦探冒险游戏！我是你的助手小AI。请你在家里找到一条线索，然后告诉我你发现了什么？",
+            "真不错！你已经找到第一条线索。接下来，我们需要找到消失的宝物。你可以问问家人关于宝物的线索。",
+            "太棒了！你的调查进展顺利。现在，我们需要解开谜题。你可以在家里寻找与数字相关的物品。",
+            "哇！你真是个优秀的小侦探！我们已经很接近真相了。最后一步，请寻找一个隐藏的秘密地点。",
+            "恭喜你！你成功解决了所有谜题，找到了宝藏！你是最棒的小侦探！"
+        ];
+        
+        // 消息队列和动画状态
+        let messageQueue = [];
+        let messageAnimationInProgress = false;
+        
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 关闭介绍屏幕并开始游戏
+            document.getElementById('startButton').addEventListener('click', function() {
+                document.getElementById('intro-overlay').style.display = 'none';
                 
-                arToolkitSource.domElement.addEventListener('canplay', () => {
-                    showDebug(
-                        'AR camera ready: ' +
-                        arToolkitSource.domElement.videoWidth + 'x' +
-                        arToolkitSource.domElement.videoHeight
-                    );
+                // 第一条消息
+                messageQueue.push(gameMsgs[0]);
+                processNextMessage();
+            });
+            
+            // 录音按钮事件
+            const recordButton = document.getElementById('recordButton');
+            recordButton.addEventListener('touchstart', startRecording);
+            recordButton.addEventListener('mousedown', startRecording);
+            recordButton.addEventListener('touchend', stopRecording);
+            recordButton.addEventListener('mouseup', stopRecording);
+            
+            // WebSocket事件
+            socket.addEventListener('open', function(event) {
+                updateStatus('已连接到服务器');
+            });
+            
+            socket.addEventListener('message', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
                     
-                    // 确保正确调整大小
-                    onWindowResize();
-                    
-                    // 初始化AR上下文
-                    initARContext();
+                    if (data.type === 'audio_chunk') {
+                        // 接收音频数据块（语音合成）
+                        processAudioChunk(data.chunk);
+                    } 
+                    else if (data.type === 'audio_complete') {
+                        // 接收完整音频数据（语音合成）
+                        finishAudioProcessing(data.fullAudio);
+                    } 
+                    else if (data.type === 'recognition_result') {
+                        // 接收语音识别结果
+                        console.log('收到识别结果:', data);
+                        
+                        // 更新识别文本
+                        if (data.isPartial) {
+                            updateRecognitionText(data.text);
+                        } else {
+                            // 完成识别
+                            finishRecognition(data.text);
+                        }
+                    } 
+                    else if (data.type === 'error') {
+                        showErrorMessage(data.message);
+                    }
+                } catch (e) {
+                    console.error('解析消息时出错:', e);
+                }
+            });
+            
+            socket.addEventListener('close', function(event) {
+                updateStatus('与服务器的连接已关闭');
+            });
+            
+            socket.addEventListener('error', function(event) {
+                updateStatus('连接错误');
+            });
+        });
+        
+        // 更新状态文本
+        function updateStatus(text) {
+            document.getElementById('connectionStatus').textContent = text;
+        }
+        
+        // 开始录音
+        async function startRecording() {
+            if (isRecording) return;
+            
+            try {
+                // 请求麦克风权限
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 创建音频上下文（如果不存在）
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                // 显示录音提示
+                document.getElementById('recordText').classList.add('active');
+                document.getElementById('recordButton').style.backgroundColor = '#e53935';
+                
+                // 创建并配置MediaRecorder
+                audioChunks = [];
+                mediaRecorder = new MediaRecorder(stream, { 
+                    mimeType: 'audio/webm;codecs=opus',
+                    audioBitsPerSecond: 16000 // 设置比特率
                 });
                 
-                // 确保在一定时间后调整大小
-                setTimeout(onWindowResize, 2000);
+                mediaRecorder.addEventListener('dataavailable', function(event) {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                });
                 
-            }, function onError() {
-                showDebug('AR 摄像头初始化失败');
-                document.getElementById('error').textContent = '摄像头访问失败，请确保已授予权限';
-                document.getElementById('error').style.display = 'block';
+                // 录音开始
+                mediaRecorder.start(100); // 每100ms触发一次dataavailable事件
+                isRecording = true;
+                recordingStartTime = Date.now();
+                
+                // 添加发送中的消息气泡
+                addSendingMessage();
+                
+            } catch (error) {
+                console.error('录音失败:', error);
+                showErrorMessage('无法访问麦克风: ' + error.message);
+            }
+        }
+        
+        // 停止录音
+        function stopRecording() {
+            if (!isRecording || !mediaRecorder) return;
+            
+            // 隐藏录音提示
+            document.getElementById('recordText').classList.remove('active');
+            document.getElementById('recordButton').style.backgroundColor = '#4a6fa5';
+            
+            // 停止录音
+            mediaRecorder.stop();
+            isRecording = false;
+            
+            // 录音完成回调
+            mediaRecorder.addEventListener('stop', function() {
+                // 创建最终的音频blob
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+                
+                // 发送录音到服务器进行识别
+                sendAudioForRecognition(audioBlob);
+                
+                // 停止所有音轨
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
             });
         }
         
-        function initARContext() {
-            // 创建AR上下文
-            arToolkitContext = new ArToolkitContext({
-                cameraParametersUrl: ArToolkitContext.baseURL + './models/camera_para.dat',
-                detectionMode: 'mono',
-                maxDetectionRate: 60,
-                canvasWidth: arToolkitSource.domElement.videoWidth,
-                canvasHeight: arToolkitSource.domElement.videoHeight,
-                imageSmoothingEnabled: true,
-                debug: DEBUG
-            });
+        // 处理音频数据块（语音合成流式处理）
+        function processAudioChunk(base64Chunk) {
+            // 这里可以实现流式音频处理逻辑
+            console.log('收到音频数据块');
+        }
+        
+        // 完成音频处理（收到完整音频）
+        function finishAudioProcessing(fullAudioBase64) {
+            // 播放完整的合成语音
+            const audioData = base64ToArrayBuffer(fullAudioBase64);
+            playAudio(audioData);
+        }
+        
+        // 将Base64转换为ArrayBuffer
+        function base64ToArrayBuffer(base64) {
+            const binaryString = window.atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
             
-            // 初始化AR上下文
-            arToolkitContext.init(() => {
-                // 复制投影矩阵到相机
-                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            return bytes.buffer;
+        }
+        
+        // 播放音频
+        function playAudio(audioData) {
+            // 创建音频上下文（如果不存在）
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            // 解码音频数据
+            audioContext.decodeAudioData(audioData, function(buffer) {
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContext.destination);
+                source.start(0);
                 
-                showDebug('AR 上下文初始化成功');
-                
-                // 不再需要创建标记控制器
-                showDebug('AR 初始化完成，可以点击屏幕放置模型');
+                // 完成消息处理
+                messageAnimationInProgress = false;
+                processNextMessage();
             });
         }
         
-        function onDocumentClick(event) {
-            if (!isARMode || !modelLoaded) return;
+        // 添加消息到聊天容器
+        function addMessage(text, type) {
+            const chatContainer = document.getElementById('chatContainer');
             
-            // 更新鼠标位置
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            // 创建消息元素
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
             
-            showDebug('屏幕点击位置: ' + mouse.x.toFixed(2) + ', ' + mouse.y.toFixed(2));
+            // 创建消息气泡
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.textContent = text;
             
-            // 放置模型到点击位置
-            placeModelAtClick();
+            // 组装DOM
+            messageDiv.appendChild(bubbleDiv);
+            chatContainer.appendChild(messageDiv);
+            
+            // 滚动到底部
+            chatContainer.scrollTop = chatContainer.scrollHeight;
         }
         
-        function placeModelAtClick() {
-            if (!model || !modelLoaded) {
-                showDebug('模型未加载，无法放置');
+        // 处理消息队列中的下一条消息
+        function processNextMessage() {
+            if (messageQueue.length === 0 || messageAnimationInProgress) {
                 return;
             }
-
-            // 创建一个虚拟平面，在距离相机1米的位置
-            const planeNormal = new THREE.Vector3(0, 0, -1); // 平面法向量指向相机
-            const planeConstant = 0; // 平面通过相机原点
-            const plane = new THREE.Plane(planeNormal, planeConstant);
-
-            // 设置射线
-            raycaster.setFromCamera(mouse, camera);
-
-            // 计算射线与平面的交点
-            const targetPoint = new THREE.Vector3();
-            const intersection = raycaster.ray.intersectPlane(plane, targetPoint);
-
-            if (!intersection) {
-                showDebug('射线未与平面相交，无法放置模型');
+            
+            // 取出下一条消息
+            const message = messageQueue.shift();
+            messageAnimationInProgress = true;
+            
+            // 添加消息到界面
+            addMessage(message, 'received');
+            
+            // 发送消息到服务器进行语音合成
+            socket.send(JSON.stringify({ 
+                type: 'synthesize', 
+                text: message 
+            }));
+        }
+        
+        // 发送音频到服务器进行识别
+        function sendAudioForRecognition(audioBlob) {
+            // 检查WebSocket连接
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                console.error('WebSocket未连接');
+                showErrorMessage('服务器连接已断开，请刷新页面重试');
                 return;
             }
-
-            showDebug('放置模型到位置: ' + 
-                      targetPoint.x.toFixed(2) + ', ' + 
-                      targetPoint.y.toFixed(2) + ', ' + 
-                      targetPoint.z.toFixed(2));
-
-            // 克隆原始模型
-            const modelCopy = model.clone();
-
-            // 设置模型位置
-            modelCopy.position.copy(targetPoint);
-
-            // 调整模型大小和方向
-            modelCopy.scale.set(0.01, 0.01, 0.01);
-            modelCopy.rotation.set(-Math.PI / 2, 0, 0);
-
-            // 添加到AR场景
-            arScene.add(modelCopy);
-            placedModels.push(modelCopy);
-
-            showDebug('模型已放置，当前共有 ' + placedModels.length + ' 个模型');
-
-            // 隐藏加载提示
-            document.getElementById('loading').style.display = 'none';
-        }
-        
-        function adjustModelForAR() {
-            if (!model) return;
             
-            // 设置原始模型不可见（仅用于克隆）
-            model.visible = false;
-            showDebug('原始模型已准备好进行克隆和放置');
-        }
-        
-        function centerModel(modelToCenter) {
-            if (!modelToCenter) return;
+            console.log('发送音频数据进行识别，大小:', audioBlob.size, '字节');
             
-            // 计算模型的边界框
-            const box = new THREE.Box3().setFromObject(modelToCenter);
-            const center = new THREE.Vector3();
-            box.getCenter(center);
-            
-            // 将模型居中
-            modelToCenter.position.sub(center);
-            
-            // 计算适当的缩放比例
-            const size = new THREE.Vector3();
-            box.getSize(size);
-            const maxDimension = Math.max(size.x, size.y, size.z);
-            const scale = 1 / maxDimension; // 缩放到单位大小
-            modelToCenter.scale.set(scale, scale, scale);
-            
-            showDebug('模型已居中，尺寸: ' + size.x.toFixed(2) + 'x' + 
-                      size.y.toFixed(2) + 'x' + size.z.toFixed(2));
-        }
-        
-        function addHelpers() {
-            // 添加坐标轴和网格辅助
-            const axesHelper = new THREE.AxesHelper(5);
-            axesHelper.name = 'axes-helper';
-            scene.add(axesHelper);
-            
-            const gridHelper = new THREE.GridHelper(10, 10);
-            gridHelper.name = 'grid-helper';
-            scene.add(gridHelper);
-        }
-        
-        function removeHelpers() {
-            // 移除辅助对象
-            scene.remove(scene.getObjectByName('axes-helper'));
-            scene.remove(scene.getObjectByName('grid-helper'));
-        }
-        
-        function addLights(targetScene) {
-            // 添加环境光
-            const ambientLight = new THREE.AmbientLight(0xffffff, 1);
-            targetScene.add(ambientLight);
-            
-            // 添加方向光
-            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 2);
-            directionalLight1.position.set(5, 10, 7);
-            targetScene.add(directionalLight1);
-            
-            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 2);
-            directionalLight2.position.set(-5, -10, -7);
-            targetScene.add(directionalLight2);
-            
-            // 添加点光源
-            const pointLight = new THREE.PointLight(0xffffff, 2);
-            pointLight.position.set(0, 5, 5);
-            targetScene.add(pointLight);
-        }
-        
-        function loadModel() {
-            const loader = new GLTFLoader();
-            
-            showDebug('开始加载模型...');
-            
-            loader.load(
-                './models/dodge_challenger_rt/scene.gltf',
-                (gltf) => {
-                    model = gltf.scene;
-                    modelLoaded = true;
-                    
-                    showDebug('模型加载成功');
-                    
-                    // 遍历模型的所有子对象并设置材质属性
-                    model.traverse((child) => {
-                        if (child.isMesh) {
-                            child.material.side = THREE.DoubleSide;
-                            child.material.needsUpdate = true;
-                            
-                            if (child.material.transparent) {
-                                child.material.depthWrite = false;
-                                child.material.needsUpdate = true;
-                            }
-                        }
-                    });
-                    
-                    if (isARMode) {
-                        // 准备模型用于AR放置
-                        adjustModelForAR();
-                    } else {
-                        // 3D模式直接添加到场景
-                        scene.add(model);
-                        centerModel(model);
-                        document.getElementById('loading').style.display = 'none';
-                    }
-                    
-                    // 如果模型包含动画
-                    if (gltf.animations && gltf.animations.length > 0) {
-                        mixer = new THREE.AnimationMixer(model);
-                        gltf.animations.forEach((clip, index) => {
-                            if (index === 0) {
-                                mixer.clipAction(clip).play();
-                            }
-                        });
-                    }
-                },
-                (xhr) => {
-                    const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
-                    showDebug('模型加载进度: ' + percent + '%');
-                },
-                (error) => {
-                    showDebug('模型加载失败: ' + error);
-                    document.getElementById('error').textContent = '模型加载失败: ' + error;
-                    document.getElementById('error').style.display = 'block';
-                    document.getElementById('loading').style.display = 'none';
+            // 如果录音时长太短，显示提示
+            const recordDuration = (Date.now() - recordingStartTime) / 1000;
+            if (recordDuration < 0.5) {
+                // 移除临时的识别中消息
+                const pendingMessage = document.getElementById('pending-recognition');
+                if (pendingMessage) {
+                    pendingMessage.remove();
                 }
-            );
+                showErrorMessage('录音时间太短，请长按录制');
+                return;
+            }
+            
+            // 直接发送Blob数据
+            socket.send(audioBlob);
         }
         
-        function onWindowResize() {
-            if (isARMode && arToolkitSource) {
-                arToolkitSource.onResizeElement();
-                arToolkitSource.copyElementSizeTo(renderer.domElement);
-                
-                if (arToolkitContext && arToolkitContext.arController !== null) {
-                    arToolkitSource.copyElementSizeTo(arToolkitContext.arController.canvas);
-                    
-                    // 确保相机矩阵也更新
-                    camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+        // 添加发送中的消息气泡
+        function addSendingMessage() {
+            const chatContainer = document.getElementById('chatContainer');
+            
+            // 创建消息元素
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message sent recognition-pending';
+            messageDiv.id = 'pending-recognition';
+            
+            // 创建消息气泡
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            
+            // 添加识别中的提示
+            const recognitionText = document.createElement('div');
+            recognitionText.className = 'recognition-text';
+            recognitionText.textContent = '正在识别...';
+            
+            // 组装DOM
+            bubbleDiv.appendChild(recognitionText);
+            messageDiv.appendChild(bubbleDiv);
+            chatContainer.appendChild(messageDiv);
+            
+            // 滚动到底部
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        // 更新识别文本
+        function updateRecognitionText(text) {
+            const pendingMessage = document.getElementById('pending-recognition');
+            if (pendingMessage) {
+                const recognitionText = pendingMessage.querySelector('.recognition-text');
+                if (recognitionText) {
+                    recognitionText.textContent = text;
                 }
                 
-                showDebug('AR界面尺寸已调整: ' + window.innerWidth + 'x' + window.innerHeight);
-            } else {
-                // 3D模式调整
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                showDebug('3D界面尺寸已调整: ' + window.innerWidth + 'x' + window.innerHeight);
+                // 滚动到底部
+                const chatContainer = document.getElementById('chatContainer');
+                chatContainer.scrollTop = chatContainer.scrollHeight;
             }
-            
-            renderer.setSize(window.innerWidth, window.innerHeight);
         }
         
-        function animate3D() {
-            if (isARMode) return;
-            
-            window.tdAnimationFrame = requestAnimationFrame(animate3D);
-            
-            // 更新动画混合器
-            if (mixer) {
-                const delta = clock.getDelta();
-                mixer.update(delta);
+        // 完成识别
+        function finishRecognition(text) {
+            // 移除临时的识别中消息
+            const pendingMessage = document.getElementById('pending-recognition');
+            if (pendingMessage) {
+                pendingMessage.remove();
             }
             
-            // 更新控制器
-            if (controls) controls.update();
-            
-            // 渲染场景
-            renderer.render(scene, camera);
+            // 添加最终识别结果
+            if (text && text.trim() !== '') {
+                addMessage(text, 'sent');
+                
+                // 处理玩家的输入，根据游戏逻辑进行回复
+                processPlayerInput(text);
+            }
         }
         
-        function animateAR() {
-            if (!isARMode) return;
-
-            window.arAnimationFrame = requestAnimationFrame(animateAR);
-
-            // 更新AR
-            if (arToolkitContext && arToolkitSource && arToolkitSource.ready) {
-                arToolkitContext.update(arToolkitSource.domElement);
+        // 显示错误消息
+        function showErrorMessage(message) {
+            console.error(message);
+            alert('错误: ' + message);
+        }
+        
+        // 处理玩家输入
+        function processPlayerInput(text) {
+            // 这里可以添加更复杂的游戏逻辑
+            console.log('处理玩家输入:', text);
+            
+            // 简单的回复逻辑
+            setTimeout(() => {
+                // 根据游戏阶段和输入内容决定回复
+                let responseIndex = Math.min(gameState.stage, gameMsgs.length - 1);
+                messageQueue.push(gameMsgs[responseIndex]);
+                
+                // 如果游戏进展，可以更新阶段
+                if (gameState.stage < 4) {
+                    gameState.stage++;
+                }
+                
+                // 处理消息队列
+                processNextMessage();
+            }, 1000);
+        }
+        
+        // 提交线索
+        function submitClue() {
+            const clueInput = document.getElementById('clueCode');
+            const clue = clueInput.value.trim();
+            
+            if (!clue) return;
+            
+            // 根据游戏阶段处理线索
+            if (gameState.stage === 1) {
+                // 第一阶段线索
+                gameState.stage = 2;
+                document.getElementById('clueInput').style.display = 'none';
+                clueInput.value = '';
+                
+                // 添加成功找到第一个线索的消息
+                setTimeout(() => {
+                    addMessage(gameMsgs[2], 'received');
+                }, 1000);
             }
-
-            // 更新动画混合器
-            if (mixer) {
-                const delta = clock.getDelta();
-                mixer.update(delta);
+            else if (gameState.stage === 2) {
+                // 第二阶段线索
+                gameState.stage = 3;
+                clueInput.value = '';
+                
+                // 添加成功找到所有线索的消息
+                setTimeout(() => {
+                    addMessage(gameMsgs[3], 'received');
+                }, 1000);
             }
-
-            // 首先渲染AR摄像头场景
-            renderer.render(scene, camera);
-
-            // 禁用深度测试，以便放置的模型始终可见
-            renderer.autoClear = false;
-
-            // 然后渲染AR场景中的所有已放置模型
-            if (arScene) {
-                renderer.render(arScene, camera);
+            else if (gameState.stage === 3) {
+                // 第三阶段密码
+                gameState.stage = 4;
+                document.getElementById('clueInput').style.display = 'none';
+                
+                // 游戏结束消息
+                setTimeout(() => {
+                    addMessage(gameMsgs[4], 'received');
+                }, 1500);
             }
-
-            // 重新启用自动清除
-            renderer.autoClear = true;
         }
     </script>
 </body>
+</html>
